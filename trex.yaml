@@ -1,0 +1,8 @@
+- port_limit: 2
+  version: 2
+  interfaces: ['--vdev=net_af_packet0,iface=veth1', '--vdev=net_af_packet1,iface=veth3']
+  port_info:
+    - ip: 1.1.1.1
+      default_gw: 1.1.1.2
+    - ip: 1.1.1.3
+      default_gw: 1.1.1.4

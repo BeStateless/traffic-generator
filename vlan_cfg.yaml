@@ -1,0 +1,16 @@
+- port_limit      : 2
+  version         : 2
+#List of interfaces. Change to suit your setup. Use ./dpdk_setup_ports.py -s to see available options
+  interfaces    : ['--vdev=net_af_packet0,iface=veth1', '--vdev=net_af_packet1,iface=veth2'] 
+  port_info       :  # Port IPs. Change to suit your needs. In case of loopback, you can leave as is.
+          - ip         : 1.1.1.1
+            default_gw : 2.2.2.2
+            dest_mac   : '00:00:00:01:00:00'
+            src_mac    : '00:00:00:02:00:00'
+            vlan       : 101
+          - ip         : 1.1.1.1
+            default_gw : 2.2.2.2
+            dest_mac   : '00:00:00:01:00:00'
+            src_mac    : '00:00:00:02:00:00'
+            vlan       : 202
+
