@@ -1,12 +1,14 @@
 #!/bin/bash -eux 
 
-[[ ${EUID} -ne 0 ]] && echo "You must run this as root." && exit 1
+# Clean up any stale sleeper container.
+docker rm -f sleeper      || true
+rm /var/run/netns/sleeper || true
 
-mkdir -p /var/run/netns
+# Start a new container to receive packets from trex.
 docker run --detach --name sleeper --net none debian:buster sleep infinity
 ln -sfT /proc/$(docker inspect --format '{{.State.Pid}}' sleeper)/ns/net /var/run/netns/sleeper
-ln -sfT /proc/$(docker inspect --format '{{.State.Pid}}' trex)/ns/net /var/run/netns/trex
 
+# String a veth between the trex container and the sleeper container.
 ip link add veth1 type veth peer name veth2
 ip link set veth1 netns trex
 ip link set veth2 netns sleeper

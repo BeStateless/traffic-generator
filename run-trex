@@ -1,17 +1,152 @@
 #!/bin/bash -eux
+# Builds and runs the trex container.
+
+[[ ${EUID} -ne 0 ]] && echo "This script must be run as root." && exit 1
+
+# Work out of the directory containing this script.
 cd "$(readlink --canonicalize "$(dirname "$0")")"
+
+# Command-line defaults.
+BASH=false
+CONFIG_SCRIPT=
+KILL_EXISTING=false
+NO_CONSOLE=false
+TREX_CONFIG="$(pwd)/traffic-configurations/mlx5.yaml"
+TREX_OPTIONS=
+TREX_PATTERNS="$(pwd)/traffic-patterns"
+
+# Parse command-line options.
+while [[ ${#} -gt 0 ]]; do
+  KEY="${1}"
+  case ${KEY} in
+    --help)
+      echo "Start up the trex container to generate traffic."
+      echo
+      echo "Usage: $0 [OPTION]..."
+      echo
+      echo "Options:"
+      echo "  --bash:                 Instead of starting the trex server, start a bash shell"
+      echo "                          in the trex container instead."
+      echo "  --config-script [path]: Path to a configuration script that configures network"
+      echo "                          interfaces, if needed. This script runs in the _host_"
+      echo "                          context, but a \"trex\" network namespace will be"
+      echo "                          available for manipulating interfaces in the trex container."
+      echo "                          Default: none"
+      echo "  --kill-existing:        Kill any existing trex container."
+      echo "  --no-console:           Don't launch trex-console, just launch the trex container"
+      echo "                          and exit this script."
+      echo "  --trex-config [path]:   Path to the Trex configuration YAML to use. This file"
+      echo "                          contains the configuration for what network interfaces"
+      echo "                          to use."
+      echo "                          Default: ./traffic-configurations/mlx5.yaml"
+      echo "  --trex-patterns [dir]:  The directory containing the traffic patterns to use."
+      echo "                          This directory will be mounted to /patterns."
+      echo "                          Default: ./traffic-patterns"
+      echo "  -- [options]:           Options to pass through directly to t-rex-64. The flag"
+      echo "                          --no-ofed-check should be included, or the trex server"
+      echo "                          won't start."
+      echo "                          Default: -i --no-ofed-check"
+      exit 0
+      ;;
+    --bash)
+      BASH=true
+      shift 1
+      ;;
+    --config-script)
+      CONFIG_SCRIPT="${2}"
+      shift 2
+      ;;
+    --config-script=*)
+      CONFIG_SCRIPT="${KEY#*=}"
+      shift 2
+      ;;
+    --kill-existing)
+      KILL_EXISTING=true
+      shift 1
+      ;;
+    --no-console)
+      NO_CONSOLE=true
+      shift 1
+      ;;
+    --trex-config)
+      TREX_CONFIG="${2}"
+      shift 2
+      ;;
+    --trex-config=*)
+      TREX_CONFIG="${KEY#*=}"
+      shift
+      ;;
+    --trex-patterns)
+      TREX_PATTERNS="${2}"
+      shift 2
+      ;;
+    --trex-patterns=*)
+      TREX_PATTERNS="${KEY#*=}"
+      shift
+      ;;
+    --)
+      shift
+      TREX_OPTIONS="$@"
+      break
+      ;;
+    *)
+      echo "Unrecognized option: ${KEY}"
+      exit 1
+      ;;
+  esac
+done
+
+[[ -n "${CONFIG_SCRIPT}" && ! -x "${CONFIG_SCRIPT}" ]] && echo "Config script must be executable." && exit 1
+[[ "${BASH}" == "true" && -n "${TREX_OPTIONS}" ]] && echo "Don't provide trex options with --bash." && exit 1
+
+COMMON_OPTIONS=(
+  --name trex
+  --hostname trex
+  --privileged
+  --cap-add=ALL
+  --security-opt seccomp=unconfined
+  --net host
+  --volume /lib/modules:/lib/modules:ro
+  --volume "$(realpath ${TREX_CONFIG}):/etc/trex_cfg.yaml:ro"
+  --volume "$(realpath ${TREX_PATTERNS}):/patterns"
+)
+
 docker build . --tag trex
-exec docker run \
-  --interactive \
-  --tty \
-  --rm \
-  --name trex \
-  --hostname trex \
-  --privileged \
-  --cap-add=ALL \
-  --security-opt seccomp=unconfined \
-  --volume /sys/bus/pci/drivers:/sys/bus/pci/drivers:rw \
-  --volume /sys/kernel/mm/hugepages:/sys/kernel/mm/hugepages:rw \
-  --volume /sys/devices/system/node:/sys/devices/system/node:rw \
-  --workdir /tmp/trex \
-  trex
+
+if [[ "${KILL_EXISTING}" == "true" ]]; then
+  docker rm -f trex || true
+fi
+
+# Launch the trex container, but run bash instead of supervisord.
+if [[ "${BASH}" == "true" ]]; then
+  exec docker run ${COMMON_OPTIONS[@]} --interactive --tty --entrypoint /bin/bash trex
+fi
+
+# Launch the trex container. Trex will not automatically start.
+docker run ${COMMON_OPTIONS[@]} --detach trex
+
+# Expose the trex container's network namespace to the "ip" command by making a symlink in /var/run/netns.
+mkdir -p /var/run/netns
+rm -f /var/run/netns/trex
+ln -sfT /proc/$(docker inspect --format '{{.State.Pid}}' trex)/ns/net /var/run/netns/trex
+
+# Run any interface configuration script if one was provided.
+[[ -n "${CONFIG_SCRIPT}" ]] && ${CONFIG_SCRIPT}
+
+# If the trex launch options are overridden, write them to a file inside of the container. When we tell supervisord to
+# launch trex, supervisord will read this file and pass the options to trex. This is pretty convoluted, but it works.
+[[ -n "${TREX_OPTIONS}" ]] && docker exec trex bash -c "echo ${TREX_OPTIONS} > /tmp/trex-args"
+
+# Now that the interfaces are configured, start the Trex service via supervisord.
+docker exec trex supervisorctl start trex
+
+# Open a trex console if requested, otherwise just exit.
+[[ "${NO_CONSOLE}" == "true" ]] && exit 0
+
+# Wait until trex server is up.
+until docker exec -it trex /bin/bash -c "ss -ntl | grep -q '0.0.0.0:4501'"; do
+  echo "Waiting for trex to start up..."
+  sleep 5
+done
+
+exec docker exec -it trex ./trex-console

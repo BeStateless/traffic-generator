@@ -1,6 +1,0 @@
-- port_limit: 2
-  version: 2
-  interfaces: ['--vdev=net_af_packet0,iface=veth1.24', 'dummy']
-  port_info:
-    - ip: 1.1.1.1
-      default_gw: 1.1.1.2
