@@ -1,40 +1,46 @@
 # traffic-generator
 
-To make a container with trex, run `./run-trex` The corresponding docker container will be called
-`trex`.
+This is a containerization of the [trex](https://trex-tgn.cisco.com/) traffic generation tool.
 
-# To setup a virtual ethernet container for communication
+# Building
 
-In a different console outside of the Docker container, run `sudo ./run-veth-container.sh`
+This is a simple docker build. Just run `docker build .`. That said, the `./run-trex` script will also build the
+container, so all that's required is to run that script.
 
-From outside trex container you can do:
-> sudo ip netns exec sleeper wireshark
+# Running
 
-From inside the container:
-> ./t-rex-64 -f cap2/dns.yaml -c 1 -m 1 -d 10
+The script `./run-trex` will build the image, start a container from the image, and drop you into a Trex shell once the
+Trex server has started up. By default, the MLX5 configuration for the headnode is used. A different trex configuration
+yaml file can be used by adding the `--trex-config` flag with the path to the configuration file.
 
-# To get Trex to ping
+# Test Ping
 
-From within the container:
-> ./t-rex-64 -i
+To test sending a single ping out of port 0 to 1.2.3.4.
 
-From a second window (via `docker exec -it trex bash`):
-> ./trex-console
-> service
-> ping -p 0 -d 1.1.1.2
+```bash
+$ ./run-trex
+trex>service
+trex(service)>ping -n 1 -p 0 -d 1.2.3.4
+```
 
-# To setup a VLAN tagged container for communication
+# Veth Example
 
-Outside of the docker container, instead of running `sudo ./run-veth-container.sh`, run 
-`sudo ./run-vlan-container.sh`
+The trex container can be tested locally using virtual ethernet devices and a particular trex yaml configuration file.
 
-Within the container, instead of running `./t-rex-64 -i` you will need to run:
-> ./t-rex-64 -i --cfg cfg/vlan_cfg.yaml
+```bash
+./run-trex --config-script ./config-scripts/veth.sh --trex-config traffic-configurations/veth.yaml
+trex>service
+trex(service)>ping -n 1 -p 0 -d 1.1.1.2
 
-All other steps should remain the same. Note that within the trex-console within the container, 
-after you've setup service mode, you can send a ping tagged with vlan by doing this:
+Pinging 1.1.1.2 from port 0 with 64 bytes of data:           
+Reply from 1.1.1.2: bytes=64, time=48.36ms, TTL=64
+trex(service)>
+```
 
-`ping -p 0 -d 1.1.1.2 --vlan 24`
+# Traffic Pattern Example
 
-However, the sleeper container would need to be configured to generate a reply for VLAN tagged
-packets. At the moment, it isn't...
+A traffic pattern file can be used to run a test.
+
+```bash
+./run-trex --no-console -- -f /patterns/dns_customer_ip.yaml -c 1 -d 10 --no-ofed-check
+```
